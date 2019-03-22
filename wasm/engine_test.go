@@ -1,13 +1,11 @@
 package wasm_test
 
 import (
-	"fmt"
 	"os"
 	"testing"
-	"time"
 
-	"github.com/sirupsen/logrus"
 	"github.com/phoreproject/synapse/wasm"
+	"github.com/sirupsen/logrus"
 )
 
 func TestMain(m *testing.M) {
@@ -24,4 +22,3 @@ func TestEngine(t *testing.T) {
 	}
 	script.Run()
 }
-
