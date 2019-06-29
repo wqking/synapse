@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"sync"
 	"time"
 
 	inet "github.com/libp2p/go-libp2p-net"
@@ -49,6 +50,8 @@ type Peer struct {
 	outgoingMessages chan proto.Message
 	closeStream      func()
 	startBlock       uint64
+
+	handlerLock *sync.RWMutex
 }
 
 // newPeer creates a P2pPeerNode
@@ -78,6 +81,8 @@ func newPeer(outbound bool, id peer.ID, host *HostNode, timeoutInterval time.Dur
 		closeStream: func() {
 			_ = connection.Reset()
 		},
+
+		handlerLock: new(sync.RWMutex),
 	}
 
 	go peer.handleConnection(connection)
@@ -258,7 +263,13 @@ func (node *Peer) handleGetAddrMessage(message *pb.GetAddrMessage) error {
 	addrMessage := pb.AddrMessage{
 		Addrs: [][]byte{},
 	}
-	for _, peer := range node.host.GetPeerList() {
+
+	originalPeerList := node.host.GetPeerList()
+	peerList := make([]*Peer, len(originalPeerList))
+	node.host.peerListLock.Lock()
+	copy(peerList, originalPeerList)
+	node.host.peerListLock.Unlock()
+	for _, peer := range peerList {
 		if peer.IsConnected() {
 			data, err := peer.GetPeerInfo().MarshalJSON()
 			if err == nil {
@@ -266,6 +277,7 @@ func (node *Peer) handleGetAddrMessage(message *pb.GetAddrMessage) error {
 			}
 		}
 	}
+
 	node.SendMessage(&addrMessage)
 
 	return nil
@@ -284,15 +296,22 @@ func (node *Peer) handleAddrMessage(message *pb.AddrMessage) error {
 }
 
 func (node *Peer) registerMessageHandler(messageName string, handler MessageHandler) {
+	node.handlerLock.Lock()
+	defer node.handlerLock.Unlock()
+
 	node.messageHandlers[messageName] = handler
 }
 
 func (node *Peer) handleMessage(message proto.Message) error {
+
 	node.LastMessageTime = time.Now()
 
 	name := proto.MessageName(message)
 
-	if handler, found := node.messageHandlers[name]; found {
+	node.handlerLock.RLock()
+	handler, found := node.messageHandlers[name]
+	node.handlerLock.RUnlock()
+	if found {
 		err := handler(node, message)
 		if err != nil {
 			logger.Errorf("error handling message: %s", err)
