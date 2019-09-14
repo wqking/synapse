@@ -1,22 +1,18 @@
-package module
+package app
 
 import (
 	"crypto/rand"
-	"fmt"
 	"os"
 	"os/signal"
-	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/phoreproject/synapse/primitives"
 
-	"github.com/libp2p/go-libp2p-core/crypto"
-	"github.com/mitchellh/go-homedir"
+	crypto "github.com/libp2p/go-libp2p-crypto"
+	homedir "github.com/mitchellh/go-homedir"
 	ma "github.com/multiformats/go-multiaddr"
-	manet "github.com/multiformats/go-multiaddr-net"
 	"github.com/phoreproject/synapse/beacon"
 	"github.com/phoreproject/synapse/beacon/config"
 	"github.com/phoreproject/synapse/beacon/db"
@@ -28,6 +24,7 @@ import (
 
 // Config is the config of an BeaconApp
 type Config struct {
+	RPCProto               string
 	RPCAddress             string
 	DataDirectory          string
 	NetworkConfig          *config.Config
@@ -44,14 +41,14 @@ type Config struct {
 	GenesisTime          uint64
 	InitialValidatorList []primitives.InitialValidatorEntry
 	DiscoveryOptions     p2p.DiscoveryOptions
-	LogLevel             logger.Level
 }
 
 // NewConfig creates a default Config
 func NewConfig() Config {
 	return Config{
+		RPCProto:               "tcp",
 		ListeningAddress:       "/ip4/127.0.0.1/tcp/20000",
-		RPCAddress:             "/ip4/127.0.0.1/tcp/20002",
+		RPCAddress:             "127.0.0.1:20002",
 		GenesisTime:            uint64(utils.Now().Unix()),
 		InitialValidatorList:   []primitives.InitialValidatorEntry{},
 		NetworkConfig:          &config.MainNetConfig,
@@ -85,80 +82,40 @@ type BeaconApp struct {
 }
 
 // NewBeaconApp creates a new instance of BeaconApp
-func NewBeaconApp(options config.Options) (*BeaconApp, error) {
-	initialPeers, err := p2p.ParseInitialConnections(options.InitialConnections)
-	if err != nil {
-		logger.Fatal(err)
-	}
-
-	f, err := os.Open(options.ChainCFG)
-	if err != nil {
-		logger.Fatal(err)
-	}
-
-	beaconConfig, err := ReadChainFileToConfig(f)
-	if err != nil {
-		logger.Fatal(err)
-	}
-
-	err = f.Close()
-	if err != nil {
-		panic(err)
-	}
-
-	beaconConfig.ListeningAddress = options.P2PListen
-	beaconConfig.RPCAddress = options.RPCListen
-	beaconConfig.DiscoveryOptions.PeerAddresses = append(beaconConfig.DiscoveryOptions.PeerAddresses, initialPeers...)
-	beaconConfig.DataDirectory = options.DataDir
-
-	beaconConfig.Resync = options.Resync
-	if beaconConfig.GenesisTime == 0 {
-		if options.GenesisTime == "" {
-			beaconConfig.GenesisTime = uint64(utils.Now().Unix())
-		} else {
-			genesisTimeString := options.GenesisTime
-			if strings.HasPrefix(genesisTimeString, "+") {
-				offsetString := genesisTimeString[1:]
-
-				offset, err := strconv.Atoi(offsetString)
-				if err != nil {
-					panic(fmt.Errorf("invalid offset (should be number): %s", offsetString))
-				}
-
-				beaconConfig.GenesisTime = uint64(utils.Now().Add(time.Duration(offset) * time.Second).Unix())
-			} else if strings.HasPrefix(genesisTimeString, "-") {
-				offsetString := genesisTimeString[1:]
-
-				offset, err := strconv.Atoi(offsetString)
-				if err != nil {
-					panic(fmt.Errorf("invalid offset (should be number): %s", offsetString))
-				}
-
-				beaconConfig.GenesisTime = uint64(utils.Now().Add(time.Duration(-offset) * time.Second).Unix())
-			} else {
-				offset, err := strconv.Atoi(genesisTimeString)
-				if err != nil {
-					panic(fmt.Errorf("invalid genesis time (should be number): %s", genesisTimeString))
-				}
-
-				beaconConfig.GenesisTime = uint64(offset)
-			}
-		}
-	}
-
+func NewBeaconApp(config Config) *BeaconApp {
 	app := &BeaconApp{
-		config:   *beaconConfig,
+		config:   config,
 		exitChan: make(chan struct{}),
 		exited:   new(sync.Mutex),
 	}
 
-	err = app.loadConfig()
+	// locked while running
+	app.exited.Lock()
+	return app
+}
+
+// Run runs the main loop of BeaconApp
+func (app *BeaconApp) Run() error {
+	err := app.RunWithoutBlock()
 	if err != nil {
-		return nil, err
+		return err
+	}
+
+	// the main loop for this thread is waiting for the exit and cleaning up
+	app.WaitForAppExit()
+
+	return nil
+}
+
+// RunWithoutBlock runs the main loop of BeaconApp and don't block
+func (app *BeaconApp) RunWithoutBlock() error {
+	err := app.loadConfig()
+	if err != nil {
+		return err
 	}
 	err = app.loadDatabase()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	signalHandler := make(chan os.Signal, 1)
@@ -170,29 +127,38 @@ func NewBeaconApp(options config.Options) (*BeaconApp, error) {
 
 	err = app.loadBlockchain()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	err = app.loadP2P()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	err = app.createRPCServer()
 	if err != nil {
-		return nil, err
+		return err
 	}
+
 	app.syncManager = beacon.NewSyncManager(app.hostNode, app.blockchain, app.mempool)
 
-	// locked while running
-	app.exited.Lock()
-	return app, nil
-}
-
-// Run runs the main loop of BeaconApp
-func (app *BeaconApp) Run() error {
 	app.syncManager.Start()
 
-	return app.runMainLoop()
+	err = app.runMainLoop()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// GetSyncManager returns the sync manager
+func (app *BeaconApp) GetSyncManager() *beacon.SyncManager {
+	return &app.syncManager
+}
+
+// GetBlockchain returns the blockchain
+func (app *BeaconApp) GetBlockchain() *beacon.Blockchain {
+	return app.blockchain
 }
 
 func (app *BeaconApp) getHostKey() (crypto.PrivKey, crypto.PubKey, error) {
@@ -336,18 +302,8 @@ func (app *BeaconApp) loadBlockchain() error {
 }
 
 func (app *BeaconApp) createRPCServer() error {
-	rpcListen, err := ma.NewMultiaddr(app.config.RPCAddress)
-	if err != nil {
-		return err
-	}
-
-	rpcListenAddr, err := manet.ToNetAddr(rpcListen)
-	if err != nil {
-		return err
-	}
-
 	go func() {
-		err := rpc.Serve(rpcListenAddr.Network(), rpcListenAddr.String(), app.blockchain, app.hostNode, app.mempool)
+		err := rpc.Serve(app.config.RPCProto, app.config.RPCAddress, app.blockchain, app.hostNode, app.mempool)
 		if err != nil {
 			panic(err)
 		}
@@ -387,9 +343,6 @@ func (app *BeaconApp) runMainLoop() error {
 		}()
 	}()
 
-	// the main loop for this thread is waiting for the exit and cleaning up
-	app.waitForExit()
-
 	return nil
 }
 
@@ -399,7 +352,8 @@ func (app BeaconApp) listenForInterrupt(signalHandler chan os.Signal) {
 	app.exitChan <- struct{}{}
 }
 
-func (app BeaconApp) waitForExit() {
+// WaitForAppExit waits for exit
+func (app BeaconApp) WaitForAppExit() {
 	<-app.exitChan
 
 	app.exit()
@@ -417,9 +371,9 @@ func (app BeaconApp) exit() {
 		p.Disconnect()
 	}
 
-	app.exited.Unlock()
-
 	os.Exit(0)
+
+	app.exited.Unlock()
 }
 
 // Exit sends a request to exit the application.
