@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/phoreproject/synapse/beacon/app"
 	"github.com/phoreproject/synapse/p2p"
 	"github.com/phoreproject/synapse/utils"
 

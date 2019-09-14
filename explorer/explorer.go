@@ -28,7 +28,6 @@ import (
 // info like forking.
 type Explorer struct {
 	app *app.BeaconApp
-
 	config *Config
 
 	db *gorm.DB
@@ -291,6 +290,11 @@ func (ex *Explorer) StartExplorer() error {
 
 	ex.app.GetSyncManager().RegisterPostProcessHook(ex.postProcessHook)
 
+<<<<<<< HEAD
+=======
+	ex.WaitForConnections(1)
+
+>>>>>>> Refactored explorer, removed duplicated code.
 	logger.Info("Ready to run.")
 
 	ex.app.WaitForAppExit()
