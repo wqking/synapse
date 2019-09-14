@@ -1,31 +1,19 @@
 package explorer
 
 import (
-	"crypto/rand"
 	"encoding/binary"
-	"io"
 	"os"
 	"os/signal"
 	"syscall"
-	"text/template"
 	"time"
 
-	crypto "github.com/libp2p/go-libp2p-crypto"
 	"github.com/phoreproject/synapse/chainhash"
 	"github.com/phoreproject/synapse/primitives"
 	"github.com/prysmaticlabs/go-ssz"
 
 	"github.com/jinzhu/gorm"
-	homedir "github.com/mitchellh/go-homedir"
-	ma "github.com/multiformats/go-multiaddr"
-	"github.com/phoreproject/synapse/beacon"
-	"github.com/phoreproject/synapse/beacon/config"
-	"github.com/phoreproject/synapse/beacon/db"
-	"github.com/phoreproject/synapse/p2p"
-
+	"github.com/phoreproject/synapse/beacon/app"
 	logger "github.com/sirupsen/logrus"
-
-	"github.com/labstack/echo"
 )
 
 // Explorer is a blockchain explorer.
@@ -33,130 +21,26 @@ import (
 // and then keeps track of its own blockchain so that it can access more
 // info like forking.
 type Explorer struct {
-	blockchain *beacon.Blockchain
+	app *app.BeaconApp
 
-	// P2P
-	hostNode    *p2p.HostNode
-	syncManager beacon.SyncManager
-
-	config Config
+	config app.Config
 
 	database *Database
-	chainDB  db.Database
 }
 
 // NewExplorer creates a new block explorer
-func NewExplorer(c Config, gormDB *gorm.DB) (*Explorer, error) {
+func NewExplorer(c app.Config, gormDB *gorm.DB) (*Explorer, error) {
 	return &Explorer{
+		app:      app.NewBeaconApp(c),
 		database: NewDatabase(gormDB),
 		config:   c,
 	}, nil
 }
 
-func (ex *Explorer) loadDatabase() error {
-	var dir string
-	if ex.config.DataDirectory == "" {
-		dataDir, err := config.GetBaseDirectory(true)
-		if err != nil {
-			panic(err)
-		}
-		dir = dataDir
-	} else {
-		d, err := homedir.Expand(ex.config.DataDirectory)
-		if err != nil {
-			panic(err)
-		}
-		dir = d
-	}
-
-	err := os.MkdirAll(dir, 0777)
-	if err != nil {
-		panic(err)
-	}
-
-	logger.Info("initializing client")
-
-	logger.Info("initializing database")
-	database := db.NewBadgerDB(dir)
-
-	if ex.config.Resync {
-		logger.Info("dropping all keys in database to resync")
-		err := database.Flush()
-		if err != nil {
-			return err
-		}
-	}
-
-	ex.chainDB = database
-
-	return nil
-}
-
-func (ex *Explorer) loadP2P() error {
-	logger.Info("loading P2P")
-	addr, err := ma.NewMultiaddr(ex.config.ListeningAddress)
-	if err != nil {
-		panic(err)
-	}
-
-	priv, pub, err := crypto.GenerateEd25519Key(rand.Reader)
-	if err != nil {
-		panic(err)
-	}
-
-	hostNode, err := p2p.NewHostNode(addr, pub, priv, ex.config.DiscoveryOptions, 16*time.Second, 16, 8*time.Second, ex.blockchain)
-	if err != nil {
-		panic(err)
-	}
-	ex.hostNode = hostNode
-
-	logger.Debug("starting peer discovery")
-	err = ex.hostNode.StartDiscovery()
-	if err != nil {
-		panic(err)
-	}
-
-	return nil
-}
-
-func (ex *Explorer) loadBlockchain() error {
-	var genesisTime uint64
-	if t, err := ex.chainDB.GetGenesisTime(); err == nil {
-		logger.WithField("genesisTime", t).Info("using time from database")
-		genesisTime = t
-	} else {
-		logger.WithField("genesisTime", ex.config.GenesisTime).Info("using time from config")
-		err := ex.chainDB.SetGenesisTime(ex.config.GenesisTime)
-		if err != nil {
-			return err
-		}
-		genesisTime = ex.config.GenesisTime
-	}
-
-	blockchain, err := beacon.NewBlockchainWithInitialValidators(ex.chainDB, ex.config.NetworkConfig, ex.config.InitialValidatorList, true, genesisTime)
-	if err != nil {
-		panic(err)
-	}
-
-	ex.blockchain = blockchain
-
-	return nil
-}
-
-// Template is the template engine used by the explorer.
-type Template struct {
-	templates *template.Template
-}
-
-// Render renders the template.
-func (t *Template) Render(w io.Writer, name string, data interface{}, c echo.Context) error {
-	return t.templates.ExecuteTemplate(w, name, data)
-}
-
 // WaitForConnections waits until beacon app is connected
 func (ex *Explorer) WaitForConnections(numConnections int) {
 	for {
-		if ex.hostNode.PeersConnected() >= numConnections {
+		if ex.app.GetHostNode().PeersConnected() >= numConnections {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -274,7 +158,7 @@ func (ex *Explorer) postProcessHook(block *primitives.Block, state *primitives.S
 		panic(err)
 	}
 
-	proposerIdx, err := state.GetBeaconProposerIndex(block.BlockHeader.SlotNumber, ex.blockchain.GetConfig())
+	proposerIdx, err := state.GetBeaconProposerIndex(block.BlockHeader.SlotNumber, ex.app.GetBlockchain().GetConfig())
 	if err != nil {
 		panic(err)
 	}
@@ -332,25 +216,13 @@ func (ex *Explorer) postProcessHook(block *primitives.Block, state *primitives.S
 }
 
 func (ex *Explorer) exit() {
-	err := ex.chainDB.Close()
-	if err != nil {
-		panic(err)
-	}
-
-	for _, p := range ex.hostNode.GetPeerList() {
-		p.Disconnect()
-	}
+	ex.app.Exit()
 
 	os.Exit(0)
 }
 
 // StartExplorer starts the block explorer
 func (ex *Explorer) StartExplorer() error {
-	err := ex.loadDatabase()
-	if err != nil {
-		return err
-	}
-
 	signalHandler := make(chan os.Signal, 1)
 	signal.Notify(signalHandler, os.Interrupt, syscall.SIGTERM)
 
@@ -360,46 +232,15 @@ func (ex *Explorer) StartExplorer() error {
 		ex.exit()
 	}()
 
-	err = ex.loadBlockchain()
-	if err != nil {
-		return err
-	}
+	ex.app.RunWithoutBlock()
 
-	err = ex.loadP2P()
-	if err != nil {
-		return err
-	}
-
-	ex.syncManager = beacon.NewSyncManager(ex.hostNode, ex.blockchain, nil)
-
-	ex.syncManager.RegisterPostProcessHook(ex.postProcessHook)
-
-	ex.syncManager.Start()
+	ex.app.GetSyncManager().RegisterPostProcessHook(ex.postProcessHook)
 
 	ex.WaitForConnections(1)
 
-	go ex.syncManager.TryInitialSync()
+	logger.Info("Ready to run.")
 
-	go func() {
-		err := ex.syncManager.ListenForBlocks()
-		if err != nil {
-			logger.Errorf("error listening for blocks: %s", err)
-		}
-	}()
-
-	t := &Template{
-		templates: template.Must(template.ParseGlob("explorer/templates/*.html")),
-	}
-
-	e := echo.New()
-	e.Renderer = t
-
-	e.Static("/static", "assets")
-	e.GET("/", ex.renderIndex)
-	e.GET("/b/:blockHash", ex.renderBlock)
-	e.GET("/v/:validatorHash", ex.renderValidator)
-
-	e.Logger.Fatal(e.Start(":1323"))
+	ex.app.WaitForAppExit()
 
 	return nil
 }

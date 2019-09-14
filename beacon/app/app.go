@@ -96,6 +96,19 @@ func NewBeaconApp(config Config) *BeaconApp {
 
 // Run runs the main loop of BeaconApp
 func (app *BeaconApp) Run() error {
+	err := app.RunWithoutBlock()
+	if err != nil {
+		return err
+	}
+
+	// the main loop for this thread is waiting for the exit and cleaning up
+	app.WaitForAppExit()
+
+	return nil
+}
+
+// RunWithoutBlock runs the main loop of BeaconApp and don't block
+func (app *BeaconApp) RunWithoutBlock() error {
 	err := app.loadConfig()
 	if err != nil {
 		return err
@@ -130,7 +143,22 @@ func (app *BeaconApp) Run() error {
 
 	app.syncManager.Start()
 
-	return app.runMainLoop()
+	err = app.runMainLoop()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// GetSyncManager returns the sync manager
+func (app *BeaconApp) GetSyncManager() *beacon.SyncManager {
+	return &app.syncManager
+}
+
+// GetBlockchain returns the blockchain
+func (app *BeaconApp) GetBlockchain() *beacon.Blockchain {
+	return app.blockchain
 }
 
 func (app *BeaconApp) getHostKey() (crypto.PrivKey, crypto.PubKey, error) {
@@ -315,9 +343,6 @@ func (app *BeaconApp) runMainLoop() error {
 		}()
 	}()
 
-	// the main loop for this thread is waiting for the exit and cleaning up
-	app.waitForExit()
-
 	return nil
 }
 
@@ -327,7 +352,8 @@ func (app BeaconApp) listenForInterrupt(signalHandler chan os.Signal) {
 	app.exitChan <- struct{}{}
 }
 
-func (app BeaconApp) waitForExit() {
+// WaitForAppExit waits for exit
+func (app BeaconApp) WaitForAppExit() {
 	<-app.exitChan
 
 	app.exit()

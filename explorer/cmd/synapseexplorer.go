@@ -4,6 +4,7 @@ import (
 	"flag"
 	"os"
 
+	"github.com/phoreproject/synapse/beacon/app"
 	"github.com/phoreproject/synapse/p2p"
 	"github.com/phoreproject/synapse/utils"
 
@@ -53,7 +54,7 @@ func main() {
 		panic(err)
 	}
 
-	explorerConfig, err := explorer.ReadChainFileToConfig(f)
+	explorerConfig, err := app.ReadChainFileToConfig(f)
 	if err != nil {
 		panic(err)
 	}
