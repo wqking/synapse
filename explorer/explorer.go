@@ -30,6 +30,11 @@ type Explorer struct {
 	app *app.BeaconApp
 	config *Config
 
+<<<<<<< HEAD
+=======
+	config *Config
+
+>>>>>>> Added new config system
 	db *gorm.DB
 
 	database *Database
@@ -290,11 +295,8 @@ func (ex *Explorer) StartExplorer() error {
 
 	ex.app.GetSyncManager().RegisterPostProcessHook(ex.postProcessHook)
 
-<<<<<<< HEAD
-=======
 	ex.WaitForConnections(1)
 
->>>>>>> Refactored explorer, removed duplicated code.
 	logger.Info("Ready to run.")
 
 	ex.app.WaitForAppExit()
