@@ -2,6 +2,7 @@ package explorer
 
 import (
 	"encoding/binary"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -12,6 +13,11 @@ import (
 	"github.com/prysmaticlabs/go-ssz"
 
 	"github.com/jinzhu/gorm"
+	// blank import
+	_ "github.com/jinzhu/gorm/dialects/mysql"
+	_ "github.com/jinzhu/gorm/dialects/postgres"
+	_ "github.com/jinzhu/gorm/dialects/sqlite"
+
 	"github.com/phoreproject/synapse/beacon/app"
 	logger "github.com/sirupsen/logrus"
 )
@@ -23,18 +29,67 @@ import (
 type Explorer struct {
 	app *app.BeaconApp
 
-	config app.Config
+	config *Config
+
+	db *gorm.DB
 
 	database *Database
 }
 
+func createDb(c *Config) *gorm.DB {
+	var db *gorm.DB
+	var err error
+	switch c.DbDriver {
+	case "sqlite":
+		db, err = gorm.Open("sqlite3", c.DbDatabase)
+		break
+
+	case "mysql":
+		passwordText := ""
+		if c.DbPassword != "" {
+			passwordText = fmt.Sprintf(":%s", c.DbPassword)
+		}
+		dbText := fmt.Sprintf(
+			"%s%s@(%s)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+			c.DbUser,
+			passwordText,
+			c.DbHost,
+			c.DbDatabase)
+		db, err = gorm.Open("mysql", dbText)
+		break
+
+	case "postgres":
+		db, err = gorm.Open(
+			"postgres",
+			fmt.Sprintf(
+				"host=%s port=5432 user=%s dbname=%s password=%s",
+				c.DbHost,
+				c.DbUser,
+				c.DbDatabase,
+				c.DbPassword))
+		break
+	}
+	if err != nil {
+		panic(err)
+	}
+	return db
+}
+
 // NewExplorer creates a new block explorer
-func NewExplorer(c app.Config, gormDB *gorm.DB) (*Explorer, error) {
-	return &Explorer{
-		app:      app.NewBeaconApp(c),
-		database: NewDatabase(gormDB),
+func NewExplorer(c *Config) (*Explorer, error) {
+	db := createDb(c)
+	ex := &Explorer{
+		app:      app.NewBeaconApp(*c.appConfig),
+		db:       db,
+		database: NewDatabase(db),
 		config:   c,
-	}, nil
+	}
+	lvl, err := logger.ParseLevel(c.Level)
+	if err != nil {
+		panic(err)
+	}
+	logger.SetLevel(lvl)
+	return ex, nil
 }
 
 // WaitForConnections waits until beacon app is connected
@@ -113,15 +168,15 @@ func (ex *Explorer) postProcessHook(block *primitives.Block, state *primitives.S
 
 	var epochCount int
 
-	epochStart := state.Slot - (state.Slot % ex.config.NetworkConfig.EpochLength)
+	epochStart := state.Slot - (state.Slot % ex.config.appConfig.NetworkConfig.EpochLength)
 
 	ex.database.database.Model(&Epoch{}).Where(&Epoch{StartSlot: epochStart}).Count(&epochCount)
 
 	if epochCount == 0 {
 		var assignments []Assignment
 
-		for i := epochStart; i < epochStart+ex.config.NetworkConfig.EpochLength; i++ {
-			assignmentForSlot, err := state.GetShardCommitteesAtSlot(i, ex.config.NetworkConfig)
+		for i := epochStart; i < epochStart+ex.config.appConfig.NetworkConfig.EpochLength; i++ {
+			assignmentForSlot, err := state.GetShardCommitteesAtSlot(i, ex.config.appConfig.NetworkConfig)
 			if err != nil {
 				panic(err)
 			}
@@ -182,7 +237,7 @@ func (ex *Explorer) postProcessHook(block *primitives.Block, state *primitives.S
 
 	// Update attestations
 	for _, att := range block.BlockBody.Attestations {
-		participants, err := state.GetAttestationParticipants(att.Data, att.ParticipationBitfield, ex.config.NetworkConfig)
+		participants, err := state.GetAttestationParticipants(att.Data, att.ParticipationBitfield, ex.config.appConfig.NetworkConfig)
 		if err != nil {
 			panic(err)
 		}
@@ -235,8 +290,6 @@ func (ex *Explorer) StartExplorer() error {
 	ex.app.RunWithoutBlock()
 
 	ex.app.GetSyncManager().RegisterPostProcessHook(ex.postProcessHook)
-
-	ex.WaitForConnections(1)
 
 	logger.Info("Ready to run.")
 
