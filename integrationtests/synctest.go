@@ -2,24 +2,20 @@ package testcase
 
 import (
 	"fmt"
-	"github.com/pkg/errors"
+	config2 "github.com/phoreproject/synapse/validator/config"
 	"os"
 	"path"
 	"time"
 
 	"google.golang.org/grpc/connectivity"
 
-	beaconconfig "github.com/phoreproject/synapse/beacon/config"
 	beaconapp "github.com/phoreproject/synapse/beacon/module"
 
-	validatorconfig "github.com/phoreproject/synapse/validator/config"
-	validatorapp "github.com/phoreproject/synapse/validator/module"
-
-	shardconfig "github.com/phoreproject/synapse/shard/config"
-	shardapp "github.com/phoreproject/synapse/shard/module"
+	"github.com/phoreproject/synapse/beacon/config"
 
 	testframework "github.com/phoreproject/synapse/integrationtests/framework"
 	"github.com/phoreproject/synapse/utils"
+	validatorapp "github.com/phoreproject/synapse/validator/module"
 	"google.golang.org/grpc"
 )
 
@@ -28,9 +24,7 @@ type ValidateTest struct {
 	beacon     *beaconapp.BeaconApp
 	dataDir    string
 	validator  *validatorapp.ValidatorApp
-	shard      *shardapp.ShardApp
 	beaconConn *grpc.ClientConn
-	shardConn  *grpc.ClientConn
 	err        chan error
 }
 
@@ -41,20 +35,28 @@ func (test *ValidateTest) setup() error {
 		return err
 	}
 
-	bApp, err := beaconapp.NewBeaconApp(beaconconfig.Options{
-		RPCListen:          "/unix/tmp/beacon.sock",
-		ChainCFG:           "regtest.json",
-		Resync:             false,
-		DataDir:            test.dataDir,
-		GenesisTime:        fmt.Sprintf("%d", utils.Now().Unix()),
-		InitialConnections: nil,
-		P2PListen:          "/ip4/127.0.0.1/tcp/0",
-	})
+	f, err := os.Open("regtest.json")
 	if err != nil {
-		return err
+		panic(err)
 	}
 
-	test.beacon = bApp
+	beaconConfig, err := beaconapp.ReadChainFileToConfig(f)
+	if err != nil {
+		panic(err)
+	}
+
+	err = f.Close()
+	if err != nil {
+		panic(err)
+	}
+
+	beaconConfig.RPCAddress = "/unix/tmp/beacon.sock"
+	beaconConfig.GenesisTime = uint64(utils.Now().Unix())
+	beaconConfig.Resync = true
+	beaconConfig.DataDirectory = test.dataDir
+	beaconConfig.NetworkConfig = &config.RegtestConfig
+
+	test.beacon = beaconapp.NewBeaconApp(*beaconConfig)
 
 	if _, err := os.Stat("/tmp/beacon.sock"); !os.IsNotExist(err) {
 		err = os.Remove("/tmp/beacon.sock")
@@ -70,48 +72,19 @@ func (test *ValidateTest) setup() error {
 
 	test.beaconConn = beaconConn
 
-	shardConn, err := grpc.Dial("unix:///tmp/shard.sock", grpc.WithInsecure())
-	if err != nil {
-		return err
-	}
-
-	test.shardConn = shardConn
-
-	validatorIndices := make([]string, 256)
+	validatorIndices := make([]uint32, 256)
 	for i := range validatorIndices {
-		validatorIndices[i] = fmt.Sprintf("%d", i)
+		validatorIndices[i] = uint32(i)
 	}
 
-	s, err := shardapp.NewShardApp(shardconfig.Options{
-		RPCListen: "/unix/tmp/shard.sock",
-		BeaconRPC: "/unix/tmp/beacon.sock",
-	})
-	if err != nil {
-		return err
+	validatorConfig := config2.ValidatorConfig{
+		BeaconConn:       beaconConn,
+		ValidatorIndices: validatorIndices,
+		RootKey:          "testnet",
+		NetworkConfig:    &config.RegtestConfig,
 	}
 
-	test.shard = s
-
-	if _, err := os.Stat("/tmp/shard.sock"); !os.IsNotExist(err) {
-		err = os.Remove("/tmp/shard.sock")
-		if err != nil {
-			return err
-		}
-	}
-
-	v, err := validatorapp.NewValidatorApp(validatorconfig.Options{
-		BeaconRPC:  "/unix/tmp/beacon.sock",
-		ShardRPC:   "/unix/tmp/shard.sock",
-		Validators: validatorIndices,
-		RootKey:    "testnet",
-		RPCListen:  "/ip4/127.0.0.1/tcp/0",
-		NetworkID:  "regtest",
-	})
-	if err != nil {
-		return err
-	}
-
-	test.validator = v
+	test.validator = validatorapp.NewValidatorApp(validatorConfig)
 
 	test.err = make(chan error)
 
@@ -139,37 +112,8 @@ func (test *ValidateTest) runValidator() {
 		<-t.C
 	}
 
-	num = 0
-	for test.shardConn.GetState() != connectivity.Ready {
-		if num >= max {
-			break
-		}
-		num++
-		<-t.C
-	}
-
 	go func() {
 		err := test.validator.Run()
-		if err != nil {
-			test.err <- err
-		}
-	}()
-}
-
-func (test *ValidateTest) runShard() {
-	t := time.NewTicker(time.Second)
-	num := 0
-	max := 15
-	for test.beaconConn.GetState() != connectivity.Ready {
-		if num >= max {
-			break
-		}
-		num++
-		<-t.C
-	}
-
-	go func() {
-		err := test.shard.Run()
 		if err != nil {
 			test.err <- err
 		}
@@ -190,16 +134,10 @@ func (test *ValidateTest) waitForBlocks() error {
 func (test *ValidateTest) exit() {
 	test.beacon.Exit()
 	test.validator.Exit()
-	test.shard.Exit()
 
 	test.beacon.WaitForExit()
 
 	err := os.Remove("/tmp/beacon.sock")
-	if err != nil {
-		panic(err)
-	}
-
-	err = os.Remove("/tmp/shard.sock")
 	if err != nil {
 		panic(err)
 	}
@@ -215,14 +153,13 @@ func (test *ValidateTest) Execute(service *testframework.TestService) error {
 
 	err := test.setup()
 	if err != nil {
-		return errors.Wrap(err, "error setting up test")
+		return err
 	}
 	test.runBeacon()
-	test.runShard()
 	test.runValidator()
 	err = test.waitForBlocks()
 	if err != nil {
-		return errors.Wrap(err, "error running test")
+		return err
 	}
 
 	defer test.exit()
