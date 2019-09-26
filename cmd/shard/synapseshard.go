@@ -10,6 +10,7 @@ import (
 
 	"github.com/phoreproject/synapse/shard/module"
 
+	"github.com/sirupsen/logrus"
 	logger "github.com/sirupsen/logrus"
 )
 
@@ -25,11 +26,13 @@ func main() {
 
 	utils.CheckNTP()
 
-	lvl, err := logger.ParseLevel(globalConfig.LogLevel)
+	lvl, err := logrus.ParseLevel(globalConfig.LogLevel)
 	if err != nil {
 		logger.Fatal(err)
 	}
-	logger.SetLevel(lvl)
+	logrus.SetLevel(lvl)
+
+	logger.WithField("version", clientVersion).Info("initializing shard manager")
 
 	logger.WithField("version", clientVersion).Info("initializing shard manager")
 
