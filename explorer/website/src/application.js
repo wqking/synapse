@@ -35,6 +35,7 @@ class Application {
 
 	initialize() {
 		this.doInitializeDatabase();
+		this.doInitializeTemplateEngine();
 
 		require('./routes').initializeRoutes(this);
 	}
@@ -52,6 +53,20 @@ class Application {
 			}
 		});
 		//this.database.on('query', console.log);
+	}
+
+	doInitializeTemplateEngine() {
+		const hbs = require('express-handlebars');
+		this.express.set('view engine', 'hbs');
+
+		const viewDirName = __dirname + '/../views';
+		this.express.engine('hbs', hbs({
+			extname: 'hbs',
+			defaultView: 'home',
+			defaultLayout: 'default',
+			layoutsDir: viewDirName + '/layouts/',
+			partialsDir: viewDirName + '/partials/'
+		}));
 	}
 
 	run() {

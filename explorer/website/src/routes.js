@@ -20,7 +20,7 @@ function initializeRoutes(application) {
 	//express.use('/', express.static('public'));
 
 	express.get('/', (request, response) => {
-		response.json({"message": "Hello"});
+		response.render('home', { title: 'Home page' });
 	});
 	express.get('/api/blocks', _c(BlockController, 'getBlocks'));
 	express.get('/api/blocks/:hash', _c(BlockController, 'getBlock'));
