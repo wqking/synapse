@@ -59,7 +59,8 @@ class Application {
 		const hbs = require('express-handlebars');
 		this.express.set('view engine', 'hbs');
 
-		const viewDirName = __dirname + '/../views';
+		const viewDirName = __dirname + '/../../frontend/views';
+		this.express.set('views', viewDirName);
 		this.express.engine('hbs', hbs({
 			extname: 'hbs',
 			defaultView: 'home',
