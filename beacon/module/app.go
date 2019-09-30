@@ -152,33 +152,13 @@ func NewBeaconApp(options config.Options) (*BeaconApp, error) {
 		exited:   new(sync.Mutex),
 	}
 
-	// locked while running
-	app.exited.Lock()
-	return app, nil
-}
-
-// Run runs the main loop of BeaconApp
-func (app *BeaconApp) Run() error {
-	err := app.RunWithoutBlock()
+	err = app.loadConfig()
 	if err != nil {
-		return err
-	}
-
-	// the main loop for this thread is waiting for the exit and cleaning up
-	app.WaitForAppExit()
-
-	return nil
-}
-
-// RunWithoutBlock runs the main loop of BeaconApp and don't block
-func (app *BeaconApp) RunWithoutBlock() error {
-	err := app.loadConfig()
-	if err != nil {
-		return err
+		return nil, err
 	}
 	err = app.loadDatabase()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	signalHandler := make(chan os.Signal, 1)
@@ -190,40 +170,29 @@ func (app *BeaconApp) RunWithoutBlock() error {
 
 	err = app.loadBlockchain()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	err = app.loadP2P()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	err = app.createRPCServer()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	app.syncManager = beacon.NewSyncManager(app.hostNode, app.blockchain, app.mempool)
 
-	app.syncManager.Start()
-
-	err = app.runMainLoop()
-	if err != nil {
-		return err
-	}
-
 	// locked while running
 	app.exited.Lock()
-
-	return nil
+	return app, nil
 }
 
-// GetSyncManager returns the sync manager
-func (app *BeaconApp) GetSyncManager() *beacon.SyncManager {
-	return &app.syncManager
-}
+// Run runs the main loop of BeaconApp
+func (app *BeaconApp) Run() error {
+	app.syncManager.Start()
 
-// GetBlockchain returns the blockchain
-func (app *BeaconApp) GetBlockchain() *beacon.Blockchain {
-	return app.blockchain
+	return app.runMainLoop()
 }
 
 func (app *BeaconApp) getHostKey() (crypto.PrivKey, crypto.PubKey, error) {
@@ -418,6 +387,9 @@ func (app *BeaconApp) runMainLoop() error {
 		}()
 	}()
 
+	// the main loop for this thread is waiting for the exit and cleaning up
+	app.waitForExit()
+
 	return nil
 }
 
@@ -427,8 +399,7 @@ func (app BeaconApp) listenForInterrupt(signalHandler chan os.Signal) {
 	app.exitChan <- struct{}{}
 }
 
-// WaitForAppExit waits for exit
-func (app BeaconApp) WaitForAppExit() {
+func (app BeaconApp) waitForExit() {
 	<-app.exitChan
 
 	app.exit()
