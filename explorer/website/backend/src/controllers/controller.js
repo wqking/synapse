@@ -25,6 +25,13 @@ class Controller {
 		});
 	}
 	
+	send404(response) {
+		response.status(404);
+		response.json({
+			message: 'not found'
+		});
+	}
+	
 	apiSendError(response, errorMessage, errorCode) {
 		errorMessage = util.checkValue(errorMessage, "Error");
 		errorCode = util.checkValue(errorCode, 1);

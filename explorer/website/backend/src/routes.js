@@ -17,11 +17,19 @@ function initializeRoutes(application) {
 	// parse requests of content-type - application/json
 	express.use(bodyParser.json());
 
-	//express.use('/', express.static('public'));
-
+	const publicFolder =  __dirname + '/../../frontend/public/';
+	express.use('/', application.getExpressClass().static(publicFolder));
+	
 	express.get('/', (request, response) => {
-		response.render('home', { title: 'Home page' });
+		response.render('pages/home', { title: 'Home page' });
 	});
+	
+	express.get('/validators', (request, response) => {
+		response.render('pages/validators', { title: 'Validator page' });
+	});
+	
+	express.get('/block', _c(BlockController, 'viewBlockDetail'));
+
 	express.get('/api/blocks', _c(BlockController, 'getBlocks'));
 	express.get('/api/blocks/:hash', _c(BlockController, 'getBlock'));
 

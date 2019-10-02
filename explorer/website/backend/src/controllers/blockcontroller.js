@@ -1,8 +1,23 @@
 const Controller = require('./controller').Controller;
+const util = require('../util');
 
 class BlockController extends Controller {
 	constructor() {
 		super();
+	}
+
+	viewBlockDetail(request, response) {
+		const urlQueries = request.query;
+		const hash = urlQueries.hash;
+		this.getDatabase().select().from('blocks').whereRaw('hex(hash) = ?', [ hash ]).then((blockList) => {
+			if(blockList.length === 0) {
+				this.send404(response);
+			}
+			else {
+				const block = util.bufferFieldsToHex(blockList[0]);
+				response.render('pages/blockdetail', { title: 'Block detail', block: block });
+			}
+		});
 	}
 
 	getBlocks(request, response) {
@@ -15,7 +30,7 @@ class BlockController extends Controller {
 			query = query.limit(parseInt(urlQueries.c));
 		}
 		query.then(function(blockList) {
-			response.json(blockList);
+			response.json(util.bufferFieldsToHex(blockList));
 		});
 	}
 
@@ -26,7 +41,7 @@ class BlockController extends Controller {
 				this.apiSend404(response);
 			}
 			else {
-				response.json(blockList[0]);
+				response.json(util.bufferFieldsToHex(blockList[0]));
 			}
 		});
 	}

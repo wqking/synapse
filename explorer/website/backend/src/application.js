@@ -2,8 +2,11 @@ const util = require('./util');
 
 class Application {
 	constructor() {
-		this.express = require('express')();
+		this.expressClass = require('express');
+		this.express = this.expressClass();
 		this.config = require('config');
+
+		this.frontEndPath = __dirname + '/../../frontend';
 
 		this.controllerMap = {};
 
@@ -29,8 +32,23 @@ class Application {
 		return this.database;
 	}
 
+	getExpressClass() {
+		return this.expressClass;
+	}
+
 	getExpress() {
 		return this.express;
+	}
+
+	getFrontEndPath() {
+		return this.frontEndPath;
+	}
+
+	getFrontEndViewsPath(path) {
+		if(! path) {
+			path = '';
+		}
+		return this.frontEndPath + '/views' + path;
 	}
 
 	initialize() {
@@ -59,7 +77,7 @@ class Application {
 		const hbs = require('express-handlebars');
 		this.express.set('view engine', 'hbs');
 
-		const viewDirName = __dirname + '/../../frontend/views';
+		const viewDirName = this.getFrontEndViewsPath();
 		this.express.set('views', viewDirName);
 		this.express.engine('hbs', hbs({
 			extname: 'hbs',
@@ -68,6 +86,8 @@ class Application {
 			layoutsDir: viewDirName + '/layouts/',
 			partialsDir: viewDirName + '/partials/'
 		}));
+
+		require('./templatehelpers').initializeTemplateHelpers(this);
 	}
 
 	run() {

@@ -30,4 +30,22 @@ util.checkValue = function(value, defaultValue)
 	return value;
 }
 
+util.bufferFieldsToHex = function(dict)
+{
+	if(Array.isArray(dict)) {
+		for(var i = 0; i < dict.length; ++i) {
+			dict[i] = util.bufferFieldsToHex(dict[i]);
+		}
+	}
+	else {
+		for(var key in dict) {
+			if(dict[key] && dict[key].constructor == Buffer) {
+				dict[key] = dict[key].toString('hex');
+			}
+		}
+	}
+
+	return dict;
+}
+
 module.exports = util;

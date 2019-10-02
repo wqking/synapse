@@ -1,4 +1,5 @@
 const Controller = require('./controller').Controller;
+const util = require('../util');
 
 class ValidatorController extends Controller {
 	constructor() {
@@ -15,7 +16,7 @@ class ValidatorController extends Controller {
 			query = query.limit(parseInt(urlQueries.c));
 		}
 		query.then(function(validatorList) {
-			response.json(validatorList);
+			response.json(util.bufferFieldsToHex(validatorList));
 		});
 	}
 
@@ -26,7 +27,7 @@ class ValidatorController extends Controller {
 				this.apiSend404(response);
 			}
 			else {
-				response.json(validatorList[0]);
+				response.json(util.bufferFieldsToHex(validatorList[0]));
 			}
 		});
 	}
