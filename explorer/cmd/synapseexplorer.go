@@ -1,16 +1,10 @@
 package main
 
 import (
-	"flag"
-	"os"
-	"strings"
-
-	"github.com/phoreproject/synapse/beacon/app"
-	"github.com/phoreproject/synapse/p2p"
 	"github.com/phoreproject/synapse/utils"
 
-	_ "github.com/jinzhu/gorm/dialects/sqlite"
 	"github.com/phoreproject/synapse/explorer"
+	logger "github.com/sirupsen/logrus"
 )
 
 func main() {
@@ -22,7 +16,7 @@ func main() {
 		panic(err)
 	}
 	if changed {
-		logrus.Infof("changed ulimit to: %d", newLimit)
+		logger.Infof("changed ulimit to: %d", newLimit)
 	}
 
 	ex, err := explorer.NewExplorer(config)

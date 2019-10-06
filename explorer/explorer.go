@@ -5,9 +5,13 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/phoreproject/synapse/beacon/config"
+	"github.com/phoreproject/synapse/beacon/module"
 	"github.com/phoreproject/synapse/chainhash"
 	"github.com/phoreproject/synapse/primitives"
 	"github.com/prysmaticlabs/go-ssz"
@@ -18,7 +22,6 @@ import (
 	_ "github.com/jinzhu/gorm/dialects/postgres"
 	_ "github.com/jinzhu/gorm/dialects/sqlite"
 
-	"github.com/phoreproject/synapse/beacon/app"
 	logger "github.com/sirupsen/logrus"
 )
 
@@ -27,14 +30,9 @@ import (
 // and then keeps track of its own blockchain so that it can access more
 // info like forking.
 type Explorer struct {
-	app *app.BeaconApp
+	app    *module.BeaconApp
 	config *Config
 
-<<<<<<< HEAD
-=======
-	config *Config
-
->>>>>>> Added new config system
 	db *gorm.DB
 
 	database *Database
@@ -82,8 +80,16 @@ func createDb(c *Config) *gorm.DB {
 // NewExplorer creates a new block explorer
 func NewExplorer(c *Config) (*Explorer, error) {
 	db := createDb(c)
+	beaconConfig := config.Options{}
+	beaconConfig.Resync = c.Resync
+	beaconConfig.ChainCFG = c.ChainConfig
+	beaconConfig.DataDir = c.DataDir
+	beaconConfig.GenesisTime = strconv.FormatUint(c.appConfig.GenesisTime, 10)
+	beaconConfig.InitialConnections = strings.Split(c.Connect, ",")
+	beaconConfig.P2PListen = c.Listen
+	app, _ := module.NewBeaconApp(beaconConfig)
 	ex := &Explorer{
-		app:      app.NewBeaconApp(*c.appConfig),
+		app:      app,
 		db:       db,
 		database: NewDatabase(db),
 		config:   c,

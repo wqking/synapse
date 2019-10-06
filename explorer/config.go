@@ -4,8 +4,9 @@ import (
 	"encoding/json"
 	"flag"
 	"os"
+	"strings"
 
-	"github.com/phoreproject/synapse/beacon/app"
+	"github.com/phoreproject/synapse/beacon/module"
 	"github.com/phoreproject/synapse/p2p"
 )
 
@@ -26,7 +27,7 @@ type Config struct {
 
 	Level string `json:"level,omitempty"`
 
-	appConfig *app.Config
+	appConfig *module.Config
 }
 
 func newConfig() *Config {
@@ -154,7 +155,7 @@ func prepareConfig(config *Config) {
 		panic(err)
 	}
 
-	appConfig, err := app.ReadChainFileToConfig(f)
+	appConfig, err := module.ReadChainFileToConfig(f)
 	if err != nil {
 		panic(err)
 	}
@@ -168,7 +169,7 @@ func prepareConfig(config *Config) {
 	appConfig.Resync = config.Resync
 	appConfig.ListeningAddress = config.Listen
 
-	initialPeers, err := p2p.ParseInitialConnections(config.Connect)
+	initialPeers, err := p2p.ParseInitialConnections(strings.Split(config.Connect, ","))
 	if err != nil {
 		panic(err)
 	}
